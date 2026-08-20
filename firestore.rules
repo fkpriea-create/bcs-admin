@@ -1,0 +1,95 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Check if request is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Check if user is an authorized Admin
+    function isAdmin() {
+      return isAuthenticated() && (
+        request.auth.token.email == "fkpriea@gmail.com" ||
+        request.auth.token.role == "ADMIN" ||
+        request.auth.token.admin == true ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    // ===============================================================
+    // SUBJECTS COLLECTION
+    // - Read: Public (Students & guests can read syllabus subjects)
+    // - Create/Update: Authenticated Admin
+    // - Delete: STRICTLY Admin only
+    // ===============================================================
+    match /subjects/{subjectId} {
+      allow read: if true;
+      allow create, update: if isAuthenticated();
+      allow delete: if isAdmin();
+    }
+
+    // ===============================================================
+    // TOPICS COLLECTION
+    // - Read: Public (Students & guests can read topics)
+    // - Create/Update: Authenticated Admin
+    // - Delete: STRICTLY Admin only
+    // ===============================================================
+    match /topics/{topicId} {
+      allow read: if true;
+      allow create, update: if isAuthenticated();
+      allow delete: if isAdmin();
+    }
+
+    // ===============================================================
+    // TASKS COLLECTION
+    // - Read: Public (Students & guests can fetch daily study tasks)
+    // - Create/Update: Authenticated Admin
+    // - Delete: STRICTLY Admin only
+    // ===============================================================
+    match /tasks/{taskId} {
+      allow read: if true;
+      allow create, update: if isAuthenticated();
+      allow delete: if isAdmin();
+    }
+
+    // ===============================================================
+    // USERS COLLECTION (Student & Admin profiles)
+    // - Read: Authenticated users
+    // - Create/Update: Owner or Admin
+    // - Delete: STRICTLY Admin only
+    // ===============================================================
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    // ===============================================================
+    // TASK COMPLETIONS COLLECTION
+    // - Read: Authenticated users
+    // - Create/Update: Owner or Admin
+    // - Delete: Owner or Admin
+    // ===============================================================
+    match /task_completions/{completionId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated() && (
+        request.resource.data.userId == request.auth.uid ||
+        request.auth.uid == resource.data.userId ||
+        isAdmin()
+      );
+      allow delete: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid ||
+        isAdmin()
+      );
+    }
+
+    // ===============================================================
+    // ADMINS REGISTRY COLLECTION
+    // ===============================================================
+    match /admins/{adminId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+  }
+}

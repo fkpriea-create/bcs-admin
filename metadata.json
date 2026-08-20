@@ -1,0 +1,7 @@
+{
+  "name": "BCS Diary Admin",
+  "description": "Admin workspace for BCS Diary to manage subjects, syllabus topics, daily study tasks, Google Drive lecture resources, and monitor student progress and completion analytics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+

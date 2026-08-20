@@ -1,0 +1,52 @@
+    fun observeExamResults(examId: String): Flow<List<com.example.data.local.entity.ExamResultEntity>> = callbackFlow {
+        val db = firestore
+        if (db == null) {
+            close()
+            return@callbackFlow
+        }
+        val registration = db.collection("exam_results")
+            .whereEqualTo("examId", examId)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    val isPerm = error.code == FirebaseFirestoreException.Code.PERMISSION_DENIED
+                    val status = if (isPerm) LogStatus.PERMISSION_DENIED else LogStatus.ERROR
+                    addLog(
+                        FirestoreLogEntry(
+                            operation = "OBSERVE",
+                            collection = "exam_results",
+                            documentId = "*",
+                            status = status,
+                            details = "Listener error: ${error.message}",
+                            errorCode = error.code.name
+                        )
+                    )
+                    Log.w(TAG, "[OBSERVE ${status.name}] Listen failed for exam_results: ${error.message}")
+                    return@addSnapshotListener
+                }
+                if (snapshot != null) {
+                    val list = snapshot.documents.mapNotNull { doc ->
+                        try {
+                            val score = doc.getDouble("score") ?: doc.getDouble("marks") ?: doc.getDouble("totalMarks") ?: 0.0
+                            val totalMarks = doc.getDouble("totalMarks") ?: doc.getDouble("total_marks") ?: 0.0
+                            val timeTaken = doc.getLong("timeTakenSeconds")?.toInt() ?: doc.getLong("time_taken_seconds")?.toInt() ?: 0
+                            val submittedAt = doc.getLong("submittedAt") ?: doc.getLong("timestamp") ?: doc.getLong("createdAt") ?: doc.getDate("timestamp")?.time ?: 0L
+                            com.example.data.local.entity.ExamResultEntity(
+                                id = safeString(doc, "id", defaultVal = doc.id),
+                                examId = safeString(doc, "examId", "exam_id"),
+                                userId = safeString(doc, "userId", "user_id"),
+                                studentName = safeString(doc, "studentName", "student_name", "userName", defaultVal = "Unknown"),
+                                score = score,
+                                totalMarks = totalMarks,
+                                timeTakenSeconds = timeTaken,
+                                submittedAt = submittedAt
+                            )
+                        } catch (e: Throwable) {
+                            Log.e(TAG, "Error mapping exam_result doc ${doc.id}: ${e.message}")
+                            null
+                        }
+                    }.sortedByDescending { it.score }
+                    trySend(list)
+                }
+            }
+        awaitClose { registration.remove() }
+    }

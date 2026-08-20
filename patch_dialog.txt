@@ -1,0 +1,7 @@
+    examForLeaderboard?.let { exam ->
+        ExamLeaderboardDialog(
+            exam = exam,
+            viewModel = viewModel,
+            onDismiss = { examForLeaderboard = null }
+        )
+    }
