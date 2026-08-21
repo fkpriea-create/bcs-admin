@@ -102,7 +102,7 @@ fun AiExamEditorDialog(
                         Column {
                             Text("AI Exam Generator", fontWeight = FontWeight.Bold)
                             Text(
-                                "Powered by Gemini 3.5 Flash",
+                                "Powered by Gemini AI",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.primary
                             )
@@ -457,10 +457,36 @@ private suspend fun generateQuestions(
         contents = listOf(Content(parts = parts))
     )
     
-    try {
-        val response = RetrofitClient.service.generateContent(apiKey, request)
-        response.candidates.firstOrNull()?.content?.parts?.firstOrNull()?.text ?: "No response from Gemini API"
-    } catch (e: Exception) {
-        "Error generating content: ${e.message}"
+    val candidateModels = listOf(
+        "models/gemini-3.5-flash",
+        "models/gemini-flash-latest",
+        "models/gemini-3.1-flash-lite-preview",
+        "models/gemini-3.1-pro-preview",
+        "models/gemini-2.5-flash",
+        "models/gemini-2.0-flash"
+    )
+
+    var lastException: Exception? = null
+    for (model in candidateModels) {
+        try {
+            android.util.Log.d("AiExamEditor", "Trying model: $model")
+            val response = RetrofitClient.service.generateContent(model, apiKey, request)
+            val generatedText = response.candidates.firstOrNull()?.content?.parts?.firstOrNull()?.text
+            if (!generatedText.isNullOrBlank()) {
+                return@withContext generatedText
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("AiExamEditor", "Failed model $model: ${e.message}", e)
+            lastException = e
+        }
     }
+    
+    val errorDetails = if (lastException is retrofit2.HttpException) {
+        val errorBody = try { lastException.response()?.errorBody()?.string() } catch (ignored: Exception) { null }
+        "HTTP ${lastException.code()}: ${errorBody ?: lastException.message()}"
+    } else {
+        lastException?.message ?: "Unknown error"
+    }
+    
+    "Error generating content: $errorDetails"
 }

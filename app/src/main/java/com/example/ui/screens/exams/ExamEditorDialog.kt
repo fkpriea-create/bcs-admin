@@ -671,10 +671,11 @@ fun ExamEditorDialog(
                                 OutlinedTextField(
                                     value = explanation,
                                     onValueChange = { explanation = it },
-                                    label = { Text("Explanation (Optional)") },
+                                    label = { Text("Explanation (shown after the exam)") },
                                     placeholder = { Text("Why is this answer correct? Provide context...") },
                                     modifier = Modifier.fillMaxWidth(),
-                                    singleLine = true
+                                    minLines = 2,
+                                    maxLines = 5
                                 )
 
                                 Button(

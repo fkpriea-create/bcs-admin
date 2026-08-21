@@ -1,13 +1,18 @@
 package com.example.data.auth
 
+import android.app.Activity
 import android.content.Context
 import android.util.Log
 import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
+import androidx.credentials.exceptions.GetCredentialCancellationException
 import androidx.credentials.exceptions.GetCredentialException
-import com.example.data.local.entity.UserEntity
+import androidx.credentials.exceptions.GetCredentialProviderConfigurationException
+import androidx.credentials.exceptions.GetCredentialUnsupportedException
+import androidx.credentials.exceptions.NoCredentialException
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
+import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
@@ -16,8 +21,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.tasks.await
-import java.security.MessageDigest
-import java.util.UUID
 
 data class AdminUser(
     val uid: String,
@@ -68,93 +71,157 @@ class AuthManager(private val context: Context) {
             val savedEmail = prefs.getString("user_email", null)
             val savedName = prefs.getString("user_name", null)
             val savedUid = prefs.getString("user_uid", null)
+            val savedPhoto = prefs.getString("user_photo", null)
             if (!savedEmail.isNullOrBlank() && !savedUid.isNullOrBlank()) {
                 _currentUser.value = AdminUser(
                     uid = savedUid,
                     displayName = savedName ?: savedEmail.substringBefore("@"),
-                    email = savedEmail
+                    email = savedEmail,
+                    photoUrl = savedPhoto
                 )
             }
         }
     }
 
+    private fun findActivity(context: Context): Activity? {
+        var currentContext = context
+        while (currentContext is android.content.ContextWrapper) {
+            if (currentContext is Activity) {
+                return currentContext
+            }
+            currentContext = currentContext.baseContext
+        }
+        return null
+    }
+
+    private fun resolveWebClientId(callerContext: Context): String {
+        return try {
+            val resId = callerContext.resources.getIdentifier("default_web_client_id", "string", callerContext.packageName)
+            if (resId != 0) {
+                callerContext.getString(resId)
+            } else {
+                "283902388926-ha4hrv291gg25db1quf8ufvfh37pia3b.apps.googleusercontent.com"
+            }
+        } catch (e: Exception) {
+            "283902388926-ha4hrv291gg25db1quf8ufvfh37pia3b.apps.googleusercontent.com"
+        }
+    }
+
     suspend fun signInWithGoogle(
-        context: Context,
-        webClientId: String = "283902388926-ha4hrv291gg25db1quf8ufvfh37pia3b.apps.googleusercontent.com"
+        callerContext: Context,
+        serverClientId: String? = null
     ) {
         _isLoading.value = true
         _authError.value = null
         try {
-            val credentialManager = CredentialManager.create(context)
+            val activity = findActivity(callerContext) ?: (if (callerContext is Activity) callerContext else null)
+            val targetContext = activity ?: callerContext
+            val resolvedClientId = serverClientId ?: resolveWebClientId(targetContext)
+            
+            val credentialManager = CredentialManager.create(targetContext)
 
-            val rawNonce = UUID.randomUUID().toString()
-            val bytes = rawNonce.toByteArray()
-            val md = MessageDigest.getInstance("SHA-256")
-            val digest = md.digest(bytes)
-            val hashedNonce = digest.fold("") { str, it -> str + "%02x".format(it) }
-
-            val googleIdOption = GetGoogleIdOption.Builder()
-                .setFilterByAuthorizedAccounts(false)
-                .setServerClientId(webClientId)
-                .setNonce(hashedNonce)
+            // 1. First try the standard GetSignInWithGoogleOption (recommended for explicit user button tap)
+            val signInWithGoogleOption = GetSignInWithGoogleOption.Builder(serverClientId = resolvedClientId)
                 .build()
 
-            val request = GetCredentialRequest.Builder()
-                .addCredentialOption(googleIdOption)
-                .build()
+            var getCredentialResult = try {
+                val request = GetCredentialRequest.Builder()
+                    .addCredentialOption(signInWithGoogleOption)
+                    .build()
+                credentialManager.getCredential(
+                    request = request,
+                    context = targetContext
+                )
+            } catch (e: NoCredentialException) {
+                Log.d(TAG, "GetSignInWithGoogleOption returned NoCredentialException, trying GetGoogleIdOption fallback: ${e.message}")
+                null
+            }
 
-            val result = credentialManager.getCredential(
-                request = request,
-                context = context
-            )
+            // 2. If GetSignInWithGoogleOption found no cached authorized accounts, use GetGoogleIdOption with filterByAuthorizedAccounts=false
+            if (getCredentialResult == null) {
+                val googleIdOption = GetGoogleIdOption.Builder()
+                    .setFilterByAuthorizedAccounts(false)
+                    .setServerClientId(resolvedClientId)
+                    .setAutoSelectEnabled(false)
+                    .build()
 
-            val credential = result.credential
-            if (credential is CustomCredential && credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+                val request = GetCredentialRequest.Builder()
+                    .addCredentialOption(googleIdOption)
+                    .build()
+
+                getCredentialResult = credentialManager.getCredential(
+                    request = request,
+                    context = targetContext
+                )
+            }
+
+            val credential = getCredentialResult.credential
+            if (credential is CustomCredential && 
+                (credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL || 
+                 credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_SIWG_CREDENTIAL)) {
                 val googleIdTokenCredential = GoogleIdTokenCredential.createFrom(credential.data)
                 val idToken = googleIdTokenCredential.idToken
 
-                if (auth != null) {
-                    val firebaseCredential = GoogleAuthProvider.getCredential(idToken, null)
-                    val authResult = auth?.signInWithCredential(firebaseCredential)?.await()
-                    val fbUser = authResult?.user
+                var signedInUser: AdminUser? = null
 
-                    if (fbUser != null) {
-                        val adminUser = AdminUser(
-                            uid = fbUser.uid,
-                            displayName = fbUser.displayName ?: googleIdTokenCredential.displayName ?: fbUser.email?.substringBefore("@") ?: "Admin",
-                            email = fbUser.email ?: googleIdTokenCredential.id,
-                            photoUrl = fbUser.photoUrl?.toString()
-                        )
-                        saveUserSession(adminUser)
-                        _currentUser.value = adminUser
-                    } else {
-                        // Fallback user from Google Token
-                        val adminUser = AdminUser(
-                            uid = googleIdTokenCredential.id,
-                            displayName = googleIdTokenCredential.displayName ?: "Admin User",
-                            email = googleIdTokenCredential.id
-                        )
-                        saveUserSession(adminUser)
-                        _currentUser.value = adminUser
+                // Attempt Firebase Auth sign-in if available
+                if (auth != null && idToken.isNotBlank()) {
+                    try {
+                        val firebaseCredential = GoogleAuthProvider.getCredential(idToken, null)
+                        val authResult = auth?.signInWithCredential(firebaseCredential)?.await()
+                        val fbUser = authResult?.user
+
+                        if (fbUser != null) {
+                            signedInUser = AdminUser(
+                                uid = fbUser.uid,
+                                displayName = fbUser.displayName 
+                                    ?: googleIdTokenCredential.displayName 
+                                    ?: fbUser.email?.substringBefore("@") 
+                                    ?: "Admin",
+                                email = fbUser.email ?: googleIdTokenCredential.id,
+                                photoUrl = fbUser.photoUrl?.toString() ?: googleIdTokenCredential.profilePictureUri?.toString()
+                            )
+                        }
+                    } catch (fbEx: Throwable) {
+                        Log.w(TAG, "Firebase Auth with Google credential returned error, falling back to ID token payload: ${fbEx.message}")
                     }
-                } else {
-                    val adminUser = AdminUser(
-                        uid = googleIdTokenCredential.id,
-                        displayName = googleIdTokenCredential.displayName ?: "Admin User",
-                        email = googleIdTokenCredential.id
-                    )
-                    saveUserSession(adminUser)
-                    _currentUser.value = adminUser
                 }
+
+                // Fallback to Google ID token profile directly if Firebase Auth instance was skipped or unlinked
+                if (signedInUser == null) {
+                    val userEmail = googleIdTokenCredential.id
+                    val userName = googleIdTokenCredential.displayName ?: userEmail.substringBefore("@").ifBlank { "Admin" }
+                    signedInUser = AdminUser(
+                        uid = "google_${userEmail.hashCode()}",
+                        displayName = userName,
+                        email = userEmail,
+                        photoUrl = googleIdTokenCredential.profilePictureUri?.toString()
+                    )
+                }
+
+                saveUserSession(signedInUser)
+                _currentUser.value = signedInUser
             } else {
-                _authError.value = "Unrecognized credential type returned from Google Sign-In"
+                _authError.value = "Unrecognized credential type: ${credential.javaClass.simpleName}"
             }
+        } catch (e: GetCredentialCancellationException) {
+            Log.d(TAG, "User canceled Google Sign-In dialog")
+            _authError.value = null
+        } catch (e: NoCredentialException) {
+            Log.w(TAG, "No Google credentials found on device: ${e.message}")
+            _authError.value = "Google reports 'No credentials available' for this app build. In Firebase Console, make sure SHA-1 certificate is added for package 'com.aistudio.bcsdiaryadmin.app'."
+        } catch (e: GetCredentialUnsupportedException) {
+            Log.e(TAG, "Google Credentials unsupported: ${e.message}")
+            _authError.value = "Google Credentials unsupported on this device: ${e.message}"
+        } catch (e: GetCredentialProviderConfigurationException) {
+            Log.e(TAG, "Provider configuration error: ${e.message}")
+            _authError.value = "Google Play Services configuration error: ${e.message}"
         } catch (e: GetCredentialException) {
             Log.e(TAG, "GetCredentialException: ${e.message}")
-            _authError.value = "Google Sign-In prompt unavailable or canceled: ${e.localizedMessage}"
+            _authError.value = "Google Sign-In failed: ${e.message}"
         } catch (e: Throwable) {
-            Log.e(TAG, "Google Sign-In error: ${e.message}")
-            _authError.value = e.message ?: "Sign in failed"
+            Log.e(TAG, "Google Sign-In unexpected error: ${e.message}", e)
+            _authError.value = "Sign in error: ${e.message}"
         } finally {
             _isLoading.value = false
         }
@@ -190,6 +257,7 @@ class AuthManager(private val context: Context) {
             .putString("user_uid", user.uid)
             .putString("user_name", user.displayName)
             .putString("user_email", user.email)
+            .putString("user_photo", user.photoUrl)
             .apply()
     }
 

@@ -73,8 +73,9 @@ data class Candidate(
 // --- Retrofit Setup ---
 
 interface GeminiApiService {
-    @POST("v1beta/models/gemini-3.5-flash:generateContent")
+    @POST("v1beta/{modelPath}:generateContent")
     suspend fun generateContent(
+        @retrofit2.http.Path(value = "modelPath", encoded = true) modelPath: String,
         @Query("key") apiKey: String,
         @Body request: GenerateContentRequest
     ): GenerateContentResponse

@@ -277,7 +277,7 @@ fun ExamPreviewDialog(
                                     PreviewOptionRow("D", q.optionD, isCorrect = q.correctOption == "D", showCorrect = showAnswers)
                                 }
 
-                                if (showAnswers && q.explanation.isNotBlank()) {
+                                if (q.explanation.isNotBlank()) {
                                     Spacer(modifier = Modifier.height(10.dp))
                                     Surface(
                                         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
@@ -295,11 +295,20 @@ fun ExamPreviewDialog(
                                                 tint = MaterialTheme.colorScheme.primary
                                             )
                                             Spacer(modifier = Modifier.width(8.dp))
-                                            Text(
-                                                "Explanation: ${q.explanation}",
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
+                                            Column {
+                                                Text(
+                                                    "Explanation:",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = MaterialTheme.colorScheme.primary
+                                                )
+                                                Spacer(modifier = Modifier.height(2.dp))
+                                                Text(
+                                                    q.explanation,
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
                                         }
                                     }
                                 }

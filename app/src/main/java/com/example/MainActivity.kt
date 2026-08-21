@@ -80,7 +80,6 @@ class MainActivity : ComponentActivity() {
                         isLoading = isAuthLoading,
                         errorMessage = authError,
                         onGoogleSignInClick = { viewModel.signInWithGoogle(context) },
-                        onDirectAdminLoginClick = { viewModel.signInAsAdmin() },
                         onDismissError = { viewModel.clearAuthError() }
                     )
                 } else {

@@ -349,7 +349,7 @@ class FirestoreManager(private val context: Context? = null) {
             close()
             return@callbackFlow
         }
-        val registration = db.collection("exam_results")
+        val registration = db.collection("exam_attempts")
             .whereEqualTo("examId", examId)
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
@@ -358,35 +358,41 @@ class FirestoreManager(private val context: Context? = null) {
                     addLog(
                         FirestoreLogEntry(
                             operation = "OBSERVE",
-                            collection = "exam_results",
+                            collection = "exam_attempts",
                             documentId = "*",
                             status = status,
                             details = "Listener error: ${error.message}",
                             errorCode = error.code.name
                         )
                     )
-                    Log.w(TAG, "[OBSERVE ${status.name}] Listen failed for exam_results: ${error.message}")
+                    Log.w(TAG, "[OBSERVE ${status.name}] Listen failed for exam_attempts: ${error.message}")
                     return@addSnapshotListener
                 }
                 if (snapshot != null) {
                     val list = snapshot.documents.mapNotNull { doc ->
                         try {
-                            val score = doc.getDouble("score") ?: doc.getDouble("marks") ?: doc.getDouble("totalMarks") ?: 0.0
-                            val totalMarks = doc.getDouble("totalMarks") ?: doc.getDouble("total_marks") ?: 0.0
-                            val timeTaken = doc.getLong("timeTakenSeconds")?.toInt() ?: doc.getLong("time_taken_seconds")?.toInt() ?: 0
-                            val submittedAt = doc.getLong("submittedAt") ?: doc.getLong("timestamp") ?: doc.getLong("createdAt") ?: doc.getDate("timestamp")?.time ?: 0L
                             com.example.data.local.entity.ExamResultEntity(
                                 id = safeString(doc, "id", defaultVal = doc.id),
                                 examId = safeString(doc, "examId", "exam_id"),
                                 userId = safeString(doc, "userId", "user_id"),
-                                studentName = safeString(doc, "studentName", "student_name", "userName", defaultVal = "Unknown"),
-                                score = score,
-                                totalMarks = totalMarks,
-                                timeTakenSeconds = timeTaken,
-                                submittedAt = submittedAt
+                                studentName = safeString(doc, "studentName", "userName", defaultVal = "Student"),
+                                score = doc.getDouble("score")
+                                    ?: doc.getLong("score")?.toDouble()
+                                    ?: 0.0,
+                                totalMarks = (
+                                    (doc.getLong("correctCount")?.toInt() ?: 0) +
+                                    (doc.getLong("wrongCount")?.toInt() ?: 0) +
+                                    (doc.getLong("skippedCount")?.toInt() ?: 0)
+                                ).toDouble() * 10.0,
+                                timeTakenSeconds = doc.getLong("totalTimeSeconds")?.toInt()
+                                    ?: doc.getLong("timeTakenSeconds")?.toInt()
+                                    ?: 0,
+                                submittedAt = doc.getLong("completedAt")
+                                    ?: doc.getLong("submittedAt")
+                                    ?: 0L
                             )
                         } catch (e: Throwable) {
-                            Log.e(TAG, "Error mapping exam_result doc ${doc.id}: ${e.message}")
+                            Log.e(TAG, "Error mapping exam_attempt doc ${doc.id}: ${e.message}")
                             null
                         }
                     }.sortedWith(compareByDescending<com.example.data.local.entity.ExamResultEntity> { it.score }.thenBy { it.timeTakenSeconds })
@@ -432,7 +438,7 @@ class FirestoreManager(private val context: Context? = null) {
                                 optionC = safeString(doc, "optionC"),
                                 optionD = safeString(doc, "optionD"),
                                 correctOption = safeString(doc, "correctOption"),
-                                explanation = safeString(doc, "explanation"),
+                                explanation = safeString(doc, "explanation", "answerExplanation", "solution"),
                                 marks = safeInt(doc, "marks", 1),
                                 orderIndex = safeInt(doc, "orderIndex")
                             )
@@ -958,7 +964,7 @@ class FirestoreManager(private val context: Context? = null) {
             "correct_option" to question.correctOption,
             "answer" to question.correctOption,
             "correctAnswer" to question.correctOption,
-            "explanation" to question.explanation,
+            "explanation" to question.explanation.trim(),
             "marks" to question.marks,
             "orderIndex" to question.orderIndex,
             "index" to question.orderIndex,
